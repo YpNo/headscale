@@ -233,7 +233,22 @@ func TestPingResponseHandlerRejectsNonHEAD(t *testing.T) {
 
 	h := servertest.NewHarness(t, 1)
 
-	for _, method := range []string{http.MethodGet, http.MethodPost, http.MethodPut} {
+	// The server listens on an in-memory network, so the request must dial
+	// through it; the default client would reach whatever listens on the
+	// host's real 127.0.0.1:443.
+	client := &http.Client{
+		Transport: &http.Transport{DialContext: h.Server.MemNet().Dial},
+	}
+
+	tests := map[string]int{
+		http.MethodGet:  http.StatusMethodNotAllowed,
+		http.MethodPost: http.StatusMethodNotAllowed,
+		http.MethodPut:  http.StatusMethodNotAllowed,
+		// HEAD reaches the handler, which does not know the ping ID.
+		http.MethodHead: http.StatusNotFound,
+	}
+
+	for method, want := range tests {
 		t.Run(method, func(t *testing.T) {
 			t.Parallel()
 
@@ -243,14 +258,11 @@ func TestPingResponseHandlerRejectsNonHEAD(t *testing.T) {
 			req, err := http.NewRequestWithContext(ctx, method, h.Server.URL+"/machine/ping-response?id=x", nil)
 			require.NoError(t, err)
 
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				// chi may refuse the method entirely; that's equivalent to 405.
-				return
-			}
+			resp, err := client.Do(req)
+			require.NoError(t, err)
 			defer resp.Body.Close()
 
-			assert.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
+			assert.Equal(t, want, resp.StatusCode)
 		})
 	}
 }
